@@ -733,6 +733,18 @@ const SNAPSHOT = `(function(seed, opts){
     var asel=e.getAttribute('aria-selected'); if(asel!=null) base.selected=(asel==='true');
     if(e.required || e.getAttribute('aria-required')==='true') base.required=true;
     if(e.getAttribute('draggable')==='true') base.draggable=true;
+    // Site chrome (global header/nav — "Home", language picker, sign-in...) is real and stays
+    // clickable, just demoted to the end of the in-view rows so task content comes first.
+    try{ if(e.closest('nav,[role="navigation"]')) base.chrome=true; }catch(_){}
+    // Repeated links to the exact same destination (a card's photo, title, and "Opens X info"
+    // overlay often all point at the same URL): dedup key, hash dropped, bare "#"/javascript: skipped.
+    if(e.tagName==='A'){
+      // Same-PAGE hash-only hrefs ("#", "#1", "#panel-a") are cheap and collide across totally
+      // unrelated widgets (a sidebar's "#1" and a panel's "#1" resolve to the identical URL) — never
+      // dedup those. Only a link to a genuinely different page/resource is a safe, real duplicate.
+      var hattr=e.getAttribute('href')||'';
+      if(hattr && hattr.charAt(0)!=='#' && !/^javascript:/i.test(hattr)) base._dk=e.href;
+    }
     // Only surface validation errors on fields the user (or agent) has put a value in, or that the
     // page itself flags, so an untouched required form isn't a wall of warnings.
     if(e.getAttribute('aria-invalid')==='true') base.invalid='invalid';
@@ -783,10 +795,75 @@ const SNAPSHOT = `(function(seed, opts){
   var omitted=Math.max(0, inView.length-250); inView.splice(250);
   // Keep the 25 off-screen controls NEAREST the visible area (not the first 25 in DOM order, which
   // for a scrolled list are the rows furthest behind), then restore page order.
-  var OFFCAP=opts.all?400:25;
+  var OFFCAP=opts.all?400:12; // default trimmed further: the nearest few off-screen rows are rarely the next target
   var offMore=Math.max(0, offView.length-OFFCAP)+farOff;
   if(offView.length>OFFCAP){ offView.forEach(function(a,k){ a.ord=k; }); offView.sort(function(a,b){ return a.dist-b.dist; }); offView.splice(OFFCAP); offView.sort(function(a,b){ return a.ord-b.ord; }); }
+  inView.sort(function(a,b){ return (a.chrome?1:0)-(b.chrome?1:0); }); // stable: keeps relative order within each group
   var actions=inView.concat(offView);
+  // Two rows with the IDENTICAL displayed label where one element contains the other, sitting at
+  // essentially the same spot, are the same control seen twice by our own heuristics — an outer
+  // clickable "cell" (aria-label="Tuesday, October 20, 2026") wrapping the real checkbox/radio/link
+  // with the same name inside it (a calendar day, a selectable list row). A small pixel tolerance
+  // absorbs the cell's own border/padding around an absolutely-positioned inner control. Keep the
+  // one with richer state (checked/selected/expanded) when only one side has it, else the innermost.
+  try{
+    var byLbl={};
+    actions.forEach(function(a){ var k=a.kind+'|'+a.label; (byLbl[k]=byLbl[k]||[]).push(a); });
+    var dropR=new Set();
+    Object.keys(byLbl).forEach(function(key){
+      var grp=byLbl[key]; if(grp.length<2) return;
+      for(var gi=0; gi<grp.length; gi++){
+        for(var gj=0; gj<grp.length; gj++){
+          if(gi===gj) continue;
+          var A=grp[gi], B=grp[gj]; if(dropR.has(A)||dropR.has(B)) continue;
+          var ea=cache.nodes.get(A.node), eb=cache.nodes.get(B.node);
+          if(!ea||!eb||ea===eb) continue;
+          var contains; try{ contains=eb.contains(ea); }catch(_){ contains=false; }
+          if(!contains) continue; // B is an ancestor of A, same label
+          if(Math.abs(A.x-B.x)>8 || Math.abs(A.y-B.y)>8) continue; // not the same visual spot: leave both
+          var richA=A.checked!=null||A.selected!=null||A.expanded!=null;
+          var richB=B.checked!=null||B.selected!=null||B.expanded!=null;
+          if(richB && !richA) dropR.add(A); else dropR.add(B); // prefer the innermost, unless only the ancestor carries state
+        }
+      }
+    });
+    if(dropR.size) actions=actions.filter(function(a){ return !dropR.has(a); });
+  }catch(_){}
+  // Repeated links to the same destination (see _dk above): keep the clearest copy (in view, not
+  // covered, shortest label), drop the rest.
+  try{
+    var byHref={};
+    actions.forEach(function(a){ if(a._dk) (byHref[a._dk]=byHref[a._dk]||[]).push(a); });
+    var dropH=new Set();
+    Object.keys(byHref).forEach(function(href){
+      var grp=byHref[href]; if(grp.length<2) return;
+      // Labels get combined below, so there's no information reason to prefer the shorter one —
+      // prefer the LARGER, more prominent element as the surviving click target's geometry instead
+      // (a tiny trailing ")" fragment next to a wide title link would otherwise become the anchor).
+      var score=function(a){ return (a.off?2:0)+(a.covered?2:0)-Math.min((a.w||0)*(a.h||0),40000)/40000; };
+      // Cluster by PROXIMITY first (a navbar shortcut and a hero CTA can legitimately share a
+      // destination while being two different, intentionally separate controls); only within the
+      // same small visual area is one of them a genuine repeat of the other.
+      var used=new Array(grp.length).fill(false);
+      for(var gi=0; gi<grp.length; gi++){
+        if(used[gi]) continue;
+        var cluster=[grp[gi]]; used[gi]=true;
+        for(var gj=gi+1; gj<grp.length; gj++){
+          if(used[gj]) continue;
+          if(Math.abs(grp[gi].x-grp[gj].x)<=200 && Math.abs(grp[gi].y-grp[gj].y)<=200){ cluster.push(grp[gj]); used[gj]=true; }
+        }
+        if(cluster.length<2) continue;
+        var keep=cluster.reduce(function(b,a){ return score(a)<score(b) ? a : b; });
+        // Different labels on the same destination ("7 hours ago" and "197 comments" both open the
+        // same story) each carry real information — combine them into the surviving row instead of
+        // silently discarding one, so the agent never loses "197 comments" for "7 hours ago".
+        var uniq=[]; cluster.forEach(function(a){ if(uniq.indexOf(a.label)<0) uniq.push(a.label); });
+        if(uniq.length>1) keep.label=clean(uniq.join(' · '),140);
+        cluster.forEach(function(a){ if(a!==keep) dropH.add(a); });
+      }
+    });
+    if(dropH.size) actions=actions.filter(function(a){ return !dropH.has(a); });
+  }catch(_){}
   // The nearest ancestor text that isn't just the label itself: which row/item a control is in.
   cache.ctxOf=function(el, lab){ return ctxOf(el, lab); };
   function ctxOf(el, lab){
@@ -1200,12 +1277,13 @@ async function observe(tabId, opts) {
 
 // Re-resolve a ref to its live element, re-check it, and hit-test the center
 // (elementFromPoint containment) so we never click a stale/covered/wrong target.
-async function resolveHit(tabId, ref, opts) {
+async function resolveHit(tabId, ref, opts, _retries) {
+  _retries = _retries || 0;
   const forFill = opts && opts.fill ? 'true' : 'false';
   const noScroll = opts && opts.noScroll ? 'true' : 'false', noHit = opts && opts.noHit ? 'true' : 'false';
   const TXT = opts && opts.text != null ? JSON.stringify(String(opts.text)) : 'null';
   const R = JSON.stringify(String(ref));
-  return evaluate(tabId, `(function(){
+  const result = await evaluate(tabId, `(function(){
     var c=window.__pawbrowse; if(!c||!c.byId) return {error:'no snapshot yet; observe first'};
     if(c.byId[${R}]==null) return {error:'unknown ref (observe again)'};
     var e=c.get?c.get(${R}):null;
@@ -1261,6 +1339,19 @@ async function resolveHit(tabId, ref, opts) {
     if(!p.hit) return {error:'element is covered by another element (dismiss the overlay/dialog first)'};
     return {x:p.x, y:p.y};
   })()`);
+  // A ref the page-side cache no longer recognises (its map was rebuilt, this tab's world was
+  // recreated, or the element is mid-re-render from a JUST-PRIOR action — e.g. switching a
+  // code-language combobox remounts the code block, including its own "Expand code" button, a beat
+  // after the click that triggered it) is not necessarily gone: a fresh scan reruns the SAME
+  // "gone element -> matching new element" rebind snapshot() already does for re-renders. Up to two
+  // free retries with a short growing delay, transparent to the caller — costs nothing on success,
+  // and never hides a real "no longer on page" failure.
+  if(result && result.error === 'unknown ref (observe again)' && _retries < 2){
+    await sleep(_retries === 0 ? 120 : 300);
+    try { await snapshot(tabId, 1); } catch {}
+    return resolveHit(tabId, ref, opts, _retries + 1);
+  }
+  return result;
 }
 
 // Set the value of a date/time/month/week/color/range input the way a user's picker would: via the

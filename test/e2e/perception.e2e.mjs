@@ -322,7 +322,7 @@ test('repeated labels are disambiguated by their row, and the right row is hit',
 
 test('scroll with a ref scrolls that panel, not the page', { skip }, async () => {
   const t = await h.goto('round2.html');
-  assert.match(t, /"Open row 20"\s+↕/, 'rows in the fixed panel are scrolled out of their box, not below the page');
+  assert.match(t, /"Open row 12"\s+↕/, 'rows in the fixed panel are scrolled out of their box, not below the page');
   assert.equal(ref(t, 'Open row 55'), null);
   const r = await h.act({ op: 'scroll', ref: mustRef(t, 'Open row 0'), dy: 1500 });
   assert.ok(await h.js(`document.getElementById('panel').scrollTop`) > 1000);
@@ -841,4 +841,57 @@ test('jev: back and reload', { skip }, async () => {
   assert.match(r, /Widgets/);
   const r2 = await h.act({ op: 'reload' });
   assert.match(r2, /Widgets/);
+});
+
+/* --------------------------- speed: fewer, better-ordered rows --------------- */
+
+test('speed: task content is listed before global header/nav chrome', { skip }, async () => {
+  const t = await h.goto('speed.html');
+  const rows = t.split('\n').filter((l) => /^e\d/.test(l));
+  const taskIdx = rows.findIndex((l) => l.includes('"Do the task"'));
+  const homeIdx = rows.findIndex((l) => l.includes('"Home"'));
+  const signInIdx = rows.findIndex((l) => l.includes('"Sign in"'));
+  assert.ok(taskIdx >= 0 && homeIdx >= 0 && signInIdx >= 0, t);
+  assert.ok(taskIdx < homeIdx, 'main content should come before header nav links');
+  assert.ok(taskIdx < signInIdx, 'main content should come before header sign-in button');
+});
+
+test('speed: a clickable cell wrapping its own checkbox is one row, not two', { skip }, async () => {
+  const t = await h.goto('speed.html');
+  const dayRows = t.split('\n').filter((l) => /Tuesday, October 20, 2026/.test(l));
+  assert.equal(dayRows.length, 1, `expected exactly one row for the calendar day:\n${t}`);
+  assert.match(dayRows[0], /click ·/, dayRows[0]); // kept the checkbox's own richer (checked) row
+  await h.act({ op: 'click', ref: dayRows[0].split(/\s+/)[0] });
+  assert.equal(await out(), 'checkbox true', 'clicking the merged row must toggle the real checkbox');
+});
+
+test('speed: repeated links to the exact same page collapse to one row; distinct pages stay separate', { skip }, async () => {
+  const t = await h.goto('speed.html');
+  const acme = t.split('\n').filter((l) => /^e\d/.test(l) && /photo clicked|title clicked|info clicked|"Acme Inn"|"Opens Acme Inn information"|\[photo\]/.test(l));
+  assert.equal(acme.length, 1, `expected the 3 Acme Inn links to collapse to 1 row:\n${t}`);
+  mustRef(t, 'Different Hotel'); // a link to a genuinely different page must survive
+});
+
+test('speed: same-page hash links (#1 vs #2) never collapse, even when the fragment number collides across widgets', { skip }, async () => {
+  const t = await h.goto('ambient.html');
+  const r = await h.act({ op: 'click', ref: mustRef(t, 'Search site') });
+  const full = await h.observe();
+  mustRef(full, 'AirPods'); mustRef(full, 'Find a Store'); mustRef(full, 'Apple Vision Pro');
+  for (let i = 0; i <= 2; i++) mustRef(full, `Sidebar item ${i}`);
+  void r;
+});
+
+/* --------------------------- speed: transparent ref recovery ---------------- */
+
+test('speed: a ref whose id map got wiped (world/cache reset) recovers in one call, not an extra round trip', { skip }, async () => {
+  const t = await h.goto('widgets.html');
+  const ref = mustRef(t, 'Name', 'fill');
+  // Simulate the page-side ref map losing its entries entirely while the DOM node itself is unchanged
+  // (a fresh isolated-world snapshot, or any cache reset) — the underlying element is still there.
+  await h.js(`0`); // no-op to ensure the isolated world is settled before we poke it
+  await h.ev(`window.__pawbrowse.byId = {}`);
+  const r = await h.act({ op: 'type', ref, text: 'Ada' });
+  assert.doesNotMatch(r, /unknown ref/, r);
+  assert.match(r, /type e\d+/, r);
+  assert.equal(await h.js(`document.getElementById('nolabel').value`), 'Ada');
 });

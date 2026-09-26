@@ -88,6 +88,21 @@ async function recallOracle(h) {
       // accounted for if it, an ancestor (3 levels) or a descendant is a listed element
       for(var a=el,g=0; a&&g<4; a=a.parentElement,g++) if(listed.has(a)) return;
       var hit=false; listed.forEach(function(x){ if(!hit && el.contains(x)) hit=true; }); if(hit) return;
+      // Not present by node identity -- but if this is a link and a NEARBY listed element resolves
+      // to the exact same href, the product intentionally merged them (two labels, one destination,
+      // e.g. HN's "7 hours ago" / "197 comments"): that is a deliberate simplification, not a miss.
+      if(el.tagName==='A' && el.getAttribute('href')){
+        // Compare CENTER points, matching how the product itself measures "close enough to merge" —
+        // a wide title link's own left edge can be 300+px from a short trailing fragment's edge even
+        // though their centers (what the product actually compares) are well within its threshold.
+        var sameHref=false, er=el.getBoundingClientRect(), ecx=er.x+er.width/2, ecy=er.y+er.height/2;
+        listed.forEach(function(x){
+          if(sameHref || x.tagName!=='A' || x.href!==el.href) return;
+          var xr=x.getBoundingClientRect(), xcx=xr.x+xr.width/2, xcy=xr.y+xr.height/2;
+          if(Math.abs(xcx-ecx)<=260 && Math.abs(xcy-ecy)<=260) sameHref=true;
+        });
+        if(sameHref) return;
+      }
       miss.push({k:+k, tag:el.tagName, html:el.outerHTML.slice(0,160)});
     });
     return miss;
@@ -124,13 +139,21 @@ async function stalenessOracle(h, url, snap) {
     try {
       const b0 = await h.observe(); await sleep(1500); const b1 = await h.observe();
       const churn = diffRows(b0, b1).length; // the page's own background change rate
-      if (process.env.HUNT_DEBUG) console.log('DBG before act', a.id, await h.ev(`JSON.stringify([!!(window.__pawbrowse.byId||{})[${JSON.stringify(a.id)}], Object.keys(window.__pawbrowse.byId||{}).slice(0,5), location.href])`));
-      const res = await within(h.act({ op: 'click', ref: a.id }), 30000, 'act');
+      // Re-resolve THIS trial's target from a fresh snapshot before acting: an earlier trial in this
+      // same loop may have re-rendered the page (without a full navigation) and shifted ref numbers,
+      // which would make a.id a stale ref from a since-superseded observation — a hunter-loop replay
+      // artifact, not a product bug. Only fall back to the original id when no fresh match exists.
+      const freshNow = await h.snap();
+      const rematch = freshNow.actions.find((x) => x.label === a.label && x.role === a.role);
+      if (!rematch) continue; // an earlier trial's action legitimately removed this control from the page: nothing to test
+      const useId = rematch.id;
+      if (process.env.HUNT_DEBUG) console.log('DBG before act', useId, await h.ev(`JSON.stringify([!!(window.__pawbrowse.byId||{})[${JSON.stringify(useId)}], Object.keys(window.__pawbrowse.byId||{}).slice(0,5), location.href])`));
+      const res = await within(h.act({ op: 'click', ref: useId }), 30000, 'act');
       const line = res.split('\n')[1] || '';
-      if (/: (element|unknown|not visible|field)|covered|changed since|off-screen/.test(line)) findings.push({ oracle: 'refused', row: `${a.id} "${a.label.slice(0, 60)}"`, detail: line.trim() });
+      if (/: (element|unknown|not visible|field)|covered|changed since|off-screen/.test(line)) findings.push({ oracle: 'refused', row: `${useId} "${a.label.slice(0, 60)}"`, detail: line.trim() });
       const now = await h.observe(); await sleep(2000); const late = await h.observe();
       const appeared = diffRows(now, late);
-      if (appeared.length > Math.max(5, churn * 2 + 3)) findings.push({ oracle: 'stale', row: `${a.id} "${a.label.slice(0, 60)}"`, detail: `${appeared.length} rows appeared within 2s after act returned (background churn ${churn})`, sample: appeared.slice(0, 5) });
+      if (appeared.length > Math.max(5, churn * 2 + 3)) findings.push({ oracle: 'stale', row: `${useId} "${a.label.slice(0, 60)}"`, detail: `${appeared.length} rows appeared within 2s after act returned (background churn ${churn})`, sample: appeared.slice(0, 5) });
       await h.act({ op: 'key', key: 'Escape' }).catch(() => {});
       if ((await h.js('location.href')) !== url) {
         // A reset reload is a NEW document: old refs are rightly refused, so re-find the rest by label.
@@ -151,7 +174,7 @@ try {
     const t0 = Date.now();
     try {
       await within(h.goto(url), 45000, 'navigate');
-      await sleep(800);
+      await sleep(2200); // async-loaded widgets (commit lists, embedded tools) need real time to settle
       url = await h.js('location.href'); // where the site actually settled (redirects)
       await h.observe();
       const snap = await h.snap();

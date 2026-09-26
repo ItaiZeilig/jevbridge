@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Remount</title></head><body>
+<div id="banner"><button onclick="document.getElementById('banner').remove();remount()">Dismiss</button></div>
+<div id="host"><label>Enter destination <input id="dest"></label></div>
+<p id="out"></p>
+<script>
+ function o(s){document.getElementById('out').textContent=s}
+ function remount(){
+   // Fully replace the input's DOM node (a React/Vue-style re-render), same label, same page.
+   document.getElementById('host').innerHTML='<label>Enter destination <input id="dest"></label>';
+   document.getElementById('dest').addEventListener('input', e => o('typed:'+e.target.value));
+ }
+</script></body></html>
