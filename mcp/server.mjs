@@ -211,6 +211,16 @@ const TOOLS = [
   },
 ];
 
+// Dev-only tools (recording benchmarks): hidden unless PAWBROWSE_DEV_TOOLS=1.
+if (process.env.PAWBROWSE_DEV_TOOLS === '1') {
+  TOOLS.push({
+    name: 'browser_peek',
+    description: 'DEV: screenshot any tab by id (JPEG base64 + capture time) without adopting or changing it. For recording side-by-side benchmarks.',
+    inputSchema: { type: 'object', properties: { tabId: { type: 'number' }, quality: { type: 'number' }, end: { type: 'boolean' } } },
+    annotations: { title: 'Peek at a tab (dev)', readOnlyHint: true, openWorldHint: true },
+  });
+}
+
 function textResult(obj) {
   const text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
   return { content: [{ type: 'text', text }] };
@@ -237,6 +247,10 @@ async function callTool(name, args) {
       return textResult(await callExtension('act', args));
     }
     case 'browser_assert':  return textResult(await callExtension('assert', args));
+    case 'browser_peek': {
+      if (process.env.PAWBROWSE_DEV_TOOLS !== '1') throw new Error('unknown tool: browser_peek');
+      return textResult(await callExtension(args.end ? 'peek_end' : 'peek', args));
+    }
     case 'browser_screenshot': {
       const r = await callExtension('screenshot', args);
       return { content: [{ type: 'image', data: r.data, mimeType: r.mimeType }, { type: 'text', text: r.note }] };

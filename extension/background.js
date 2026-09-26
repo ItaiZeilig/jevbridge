@@ -18,7 +18,8 @@ let ws = null;
 let reconnectTimer = null;
 
 // Per-session state. Each session drives its own tab(s) inside its own tab group.
-const attachedTabs = new Set();           // tabIds we currently hold a debugger on
+const attachedTabs = new Set();
+const peekOnly = new Set();               // tabs attached ONLY for dev frame capture (peek)           // tabIds we currently hold a debugger on
 const sessions = new Map();               // sessionId -> { activeTabId, createdTabs:Set, groupId, num, color }
 const tabOwner = new Map();               // tabId -> sessionId (so sessions don't steal each other's tabs)
 const chains = new Map();
@@ -2144,6 +2145,25 @@ async function handleCommand(cmd, args, token, session) {
         }
         return `ran ${ops.length} op(s) [${note}]:\n${logLines.join('\n')}\n${takeDialogLog(tabId)}\n${(changed && deltaTable(seenFull, table)) || table}`;
       });
+    }
+    case 'peek': {
+      // Dev-only frame capture for recordings: screenshot ANY tab by id without adopting it into a
+      // session, grouping it, or enabling domains on it (so another tool driving that tab — e.g. for
+      // a side-by-side benchmark — is not disturbed). Attaches the debugger only if needed.
+      const tabId = Number(args.tabId);
+      let t; try { t = await chrome.tabs.get(tabId); } catch { throw new Error(`tab ${args.tabId} not found`); }
+      if (restrictedPage(t.url)) throw new Error('that tab is a browser page that cannot be captured');
+      if (!attachedTabs.has(tabId)) {
+        await new Promise((res, rej) => chrome.debugger.attach({ tabId }, '1.3', () => { const e = chrome.runtime.lastError; if (e && !/already attached/i.test(e.message)) rej(new Error(e.message)); else res(); }));
+        peekOnly.add(tabId);
+      }
+      const q = Math.max(20, Math.min(90, Number(args.quality) || 60));
+      const shot = await sendCdp(tabId, 'Page.captureScreenshot', { format: 'jpeg', quality: q });
+      return { data: shot.data, t: Date.now(), url: t.url };
+    }
+    case 'peek_end': {
+      for (const id of [...peekOnly]) { peekOnly.delete(id); if (!attachedTabs.has(id)) await new Promise((r) => chrome.debugger.detach({ tabId: id }, () => { void chrome.runtime.lastError; r(); })); }
+      return { ok: true };
     }
     case 'screenshot': {
       const tabId = await resolveTabId(session, args, 'inspect');

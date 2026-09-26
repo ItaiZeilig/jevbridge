@@ -136,30 +136,27 @@ Tips:
 ## Benchmark
 
 <p align="center">
-  <img src="assets/pawbrowse-vs-claude-in-chrome.gif" alt="Real side-by-side recording: PawBrowse vs Claude-in-Chrome on the same task" width="100%">
+  <a href="assets/benchmark.mp4"><img src="assets/benchmark.gif" alt="Side-by-side recording on live Booking.com: the same agent searches a Lisbon hotel through PawBrowse (102.5 s, 8 tool calls) and through Claude in Chrome (112.9 s, 11 tool calls)" width="100%"></a>
 </p>
 
-<p align="center"><em>Real side-by-side screen recording — same task (3 Wikipedia section jumps), same brain (Claude). PawBrowse acts in one call per click and finishes first; Claude-in-Chrome perceives-then-clicks. Measured numbers below.</em></p>
+<p align="center"><sub>
+Same task on live Booking.com (Lisbon, Oct 20–22, free cancellation, open the first hotel), same agent (Claude), same real Chrome.
+Each run filmed from its own tab and timed from its first action; played at 8×, clocks in real time. <a href="assets/benchmark.mp4">MP4</a>
+</sub></p>
 
-Because PawBrowse keeps **stable element refs** and its `navigate`/`act` already return the fresh
-table, the agent clicks a known target in **one** round trip. Screenshot/accessibility-tree drivers
-do **perceive-then-act** — a read (or screenshot) *then* a click — paying an extra agent round trip
-and a larger payload every action.
-
-Measured task: click 5 different section links on the same Wikipedia page, averaged, same machine,
-same agent (Claude):
-
-| | PawBrowse | Claude-in-Chrome |
+| | PawBrowse | Claude in Chrome |
 | --- | --- | --- |
-| Calls per click | **1** (`act` by stable ref) | 2 (`read_page` → click) |
-| Avg wall-clock per click | **~7.6 s** | ~17.0 s |
-| Perception payload | compact, viewport-only | full a11y tree w/ URLs (up to 50 KB) |
+| Wall-clock (incl. the agent's thinking) | **102.5 s** | 112.9 s |
+| Tool calls | **8** (12 actions) | 11 (19 actions) |
+| Screenshots needed to check state | **0** — every call returns the page's fresh element table | 3 |
+| Surprises handled | sign-in popup reported ("element is disabled") and dismissed; new tab followed automatically | a filter click that silently didn't apply, caught from a screenshot and retried |
 
-> **Honest caveat:** with Claude as the shared brain, absolute wall-clock is dominated by agent
-> latency and is noisy — treat the **~2.2× ratio** as the signal, not the exact seconds. The win is
-> *structural* (fewer round trips + smaller payloads), which also means fewer tokens per step. It's
-> **not** the sub-second speed of a small, dedicated click-picking model — PawBrowse trades that
-> raw speed for a smart, general brain (Claude) with no keys and no per-click cost.
+> **Honest caveats:** most of the time on both sides is the agent thinking between calls, so the
+> wall-clock gap is modest. The structural signal is **fewer calls and no screenshots** — PawBrowse
+> returns the page's state with every action, so the agent never has to "look again". Run 2 (Claude in
+> Chrome) also started with Booking remembering run 1's destination and dates. One run each; treat it
+> as an illustration, not a statistic. Reproduce: `scripts/demo/peek-record.mjs` films a tab,
+> `scripts/demo/render_compare.py` renders the comparison.
 
 ## How it compares
 
