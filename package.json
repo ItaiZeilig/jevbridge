@@ -1,6 +1,6 @@
 {
   "name": "pawbrowse",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Let Claude Code drive your real, logged-in Chrome. A zero-dependency MCP server + a Chrome MV3 extension that uses element-table perception over CDP. The calling agent is the policy: no second model, no API keys, page snapshots never leave for a third party.",
   "type": "module",
   "bin": {

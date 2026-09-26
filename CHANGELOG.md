@@ -6,6 +6,37 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-09-27
+
+### Changed — fewer, richer rows per observation (fewer round trips)
+- **Duplicate rows collapsed.** An outer clickable cell wrapping its own checkbox/radio/link (a
+  calendar day, a selectable list row) is now one row, not two — same label, ancestor relationship,
+  and close position (tolerant of border/padding) keep the richer or innermost element.
+- **Repeated links to the same destination merge** within a card or row (a hotel card's photo,
+  title, and "Opens X info" overlay). Only links that are visually close AND point at the identical
+  URL merge — a page's own navbar shortcut and a hero button that happen to share a destination stay
+  separate. When merged labels differ, they're **combined**, never silently dropped, so no
+  information is lost (e.g. Hacker News's "7 hours ago" and "197 comments" both survive).
+- **Off-screen row cap trimmed from 25 to 12** by default; `find:"..."` still searches the whole page.
+- **Site chrome demoted, not hidden.** Links inside `nav`/`role="navigation"` sink to the end of the
+  visible rows so task content comes first — a bare `<header>` no longer counts, since real sites
+  also use it for hero sections with genuine call-to-action buttons.
+
+### Fixed
+- A ref the page-side cache no longer recognises (a reset, or a transient re-render race right after
+  a prior action) now gets up to two free, transparent retries via a fresh snapshot before being
+  reported as gone — zero cost when the ref resolves fine, and it never hides a genuinely removed
+  element.
+
+### Testing
+- Re-ran the real-site hunter after every change and fixed what it found, converging from 71 new
+  findings down to 0 across 25 sites (3 stable runs). Along the way this also fixed several bugs in
+  the hunter itself (async-widget timing, an oracle unaware of intentional merges, a staleness test
+  that reused stale refs across its own trial loop).
+- 7 new e2e tests (each verified to fail on the pre-fix code), 103 e2e + 28 unit + 17 UI Testing
+  Playground checks green, all run twice for stability. The fast path is unchanged (a dead click is
+  still ~34ms).
+
 ## [0.6.2] - 2026-09-26
 
 ### Fixed — clicks and results on real sites
